@@ -1,15 +1,18 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { MOCK_EQUIPMENT } from './constants';
 import { Header } from './components/Header';
 import { FilterControls } from './components/FilterControls';
 import { SummaryCharts } from './components/SummaryCharts';
 import { StatusCard } from './components/StatusCard';
-import { Equipment, EquipmentStatus } from './types';
+import { Equipment, EquipmentStatus, EventLogEntry, EventType } from './types';
 import { RegistrationModal } from './components/RegistrationModal';
 import { pingDevice } from './services/pingService';
 import { SummaryIndicators } from './components/SummaryIndicators';
+import { EventLog } from './components/EventLog';
 
 type NewEquipmentData = Omit<Equipment, 'id' | 'status' | 'lastSeen'>;
+
+const MAX_LOG_ENTRIES = 50;
 
 function App() {
   const [equipment, setEquipment] = useState<Equipment[]>(MOCK_EQUIPMENT);
@@ -18,6 +21,23 @@ function App() {
   const [departmentFilter, setDepartmentFilter] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isPingingAll, setIsPingingAll] = useState(false);
+  const [eventLog, setEventLog] = useState<EventLogEntry[]>([]);
+
+  const addLogEntry = (message: string, type: EventType) => {
+    setEventLog(prevLog => {
+      const newEntry: EventLogEntry = {
+        id: `log_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        timestamp: new Date().toISOString(),
+        message,
+        type,
+      };
+      const updatedLog = [newEntry, ...prevLog];
+      if (updatedLog.length > MAX_LOG_ENTRIES) {
+        return updatedLog.slice(0, MAX_LOG_ENTRIES);
+      }
+      return updatedLog;
+    });
+  };
 
   const departments = useMemo(() => {
     const allDepartments = equipment
@@ -35,6 +55,56 @@ function App() {
     });
   }, [equipment, statusFilter, typeFilter, departmentFilter]);
 
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      setEquipment(currentEquipment => {
+        if (currentEquipment.length === 0) return currentEquipment;
+        
+        const availableForPing = currentEquipment.filter(e => e.status !== EquipmentStatus.PINGING);
+        if (availableForPing.length === 0) return currentEquipment;
+
+        const deviceToPing = availableForPing[Math.floor(Math.random() * availableForPing.length)];
+
+        addLogEntry(`Auto-pinging ${deviceToPing.name}...`, EventType.INFO);
+
+        (async () => {
+          try {
+            const newStatus = await pingDevice(deviceToPing.ipAddress);
+            if (newStatus === EquipmentStatus.UP) {
+              addLogEntry(`${deviceToPing.name} is now UP.`, EventType.SUCCESS);
+            } else {
+              addLogEntry(`Auto-ping failed for ${deviceToPing.name}. Device is DOWN.`, EventType.ERROR);
+            }
+            setEquipment(prev =>
+              prev.map(item =>
+                item.id === deviceToPing.id
+                  ? { ...item, status: newStatus, lastSeen: new Date().toISOString() }
+                  : item
+              )
+            );
+          } catch (error) {
+            console.error(`Auto-ping failed for ${deviceToPing.name}:`, error);
+            addLogEntry(`Auto-ping for ${deviceToPing.name} failed. An error occurred.`, EventType.ERROR);
+            setEquipment(prev =>
+              prev.map(item =>
+                item.id === deviceToPing.id ? { ...item, status: deviceToPing.status } : item
+              )
+            );
+          }
+        })();
+
+        return currentEquipment.map(item =>
+          item.id === deviceToPing.id
+            ? { ...item, status: EquipmentStatus.PINGING }
+            : item
+        );
+      });
+    }, 10000);
+
+    return () => clearInterval(intervalId);
+  }, []);
+
+
   const handleAddEquipment = (newEquipmentData: NewEquipmentData) => {
     const newEquipment: Equipment = {
       ...newEquipmentData,
@@ -43,15 +113,15 @@ function App() {
       lastSeen: new Date().toISOString(),
     };
     setEquipment(prev => [...prev, newEquipment]);
-    setIsModalOpen(false); // Close modal on save
+    addLogEntry(`Registered new equipment: ${newEquipment.name}`, EventType.INFO);
+    setIsModalOpen(false);
   };
 
   const handlePing = async (id: string) => {
     const currentItem = equipment.find(e => e.id === id);
-    if (!currentItem || currentItem.status === EquipmentStatus.PINGING) {
-      return; 
-    }
+    if (!currentItem || currentItem.status === EquipmentStatus.PINGING) return;
 
+    addLogEntry(`Pinging ${currentItem.name}...`, EventType.INFO);
     setEquipment(prev =>
       prev.map(item =>
         item.id === id ? { ...item, status: EquipmentStatus.PINGING } : item
@@ -60,6 +130,11 @@ function App() {
 
     try {
       const newStatus = await pingDevice(currentItem.ipAddress);
+      if (newStatus === EquipmentStatus.UP) {
+        addLogEntry(`${currentItem.name} is now UP.`, EventType.SUCCESS);
+      } else {
+        addLogEntry(`Ping failed for ${currentItem.name}. Device is DOWN.`, EventType.ERROR);
+      }
       setEquipment(prev =>
         prev.map(item =>
           item.id === id
@@ -69,7 +144,7 @@ function App() {
       );
     } catch (error) {
       console.error("Ping failed:", error);
-      // Revert to original status on error
+      addLogEntry(`Ping for ${currentItem.name} failed. An error occurred.`, EventType.ERROR);
       setEquipment(prev =>
         prev.map(item =>
           item.id === id ? { ...item, status: currentItem.status } : item
@@ -82,20 +157,21 @@ function App() {
     if (isPingingAll) return;
 
     setIsPingingAll(true);
+    addLogEntry('Pinging all devices...', EventType.INFO);
     
-    // Keep a snapshot of the state before mass-updating to "Pinging"
     const originalEquipmentState = [...equipment];
-
-    // 1. Set all to PINGING for immediate UI feedback
     setEquipment(prev =>
       prev.map(item => ({ ...item, status: EquipmentStatus.PINGING }))
     );
 
-    // 2. Create and run all ping operations concurrently
     const pingPromises = originalEquipmentState.map(async (item) => {
       try {
         const newStatus = await pingDevice(item.ipAddress);
-        // 3. Update each device's status as its promise resolves
+        if (newStatus === EquipmentStatus.UP) {
+          addLogEntry(`${item.name} is now UP.`, EventType.SUCCESS);
+        } else {
+          addLogEntry(`Ping failed for ${item.name}. Device is DOWN.`, EventType.ERROR);
+        }
         setEquipment(prev =>
           prev.map(e =>
             e.id === item.id
@@ -105,7 +181,7 @@ function App() {
         );
       } catch (error) {
         console.error(`Ping failed for ${item.name}:`, error);
-        // Revert to original status on error for this specific device
+        addLogEntry(`Ping for ${item.name} failed. An error occurred.`, EventType.ERROR);
         setEquipment(prev =>
           prev.map(e =>
             (e.id === item.id ? { ...e, status: item.status } : e)
@@ -114,11 +190,10 @@ function App() {
       }
     });
 
-    // 4. Wait for all pings to complete, then re-enable the button
     await Promise.allSettled(pingPromises);
+    addLogEntry('Finished pinging all devices.', EventType.INFO);
     setIsPingingAll(false);
   };
-
 
   return (
     <>
@@ -142,18 +217,24 @@ function App() {
               isPingingAll={isPingingAll}
             />
 
-            {filteredEquipment.length > 0 ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                {filteredEquipment.map(item => (
-                  <StatusCard key={item.id} item={item} onPing={handlePing} />
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-16 bg-slate-800 rounded-lg">
-                <h3 className="text-xl font-semibold text-slate-300">No Equipment Found</h3>
-                <p className="text-slate-400 mt-2">Adjust your filters or register new equipment.</p>
-              </div>
-            )}
+            <div className="mt-6">
+              {filteredEquipment.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {filteredEquipment.map(item => (
+                    <StatusCard key={item.id} item={item} onPing={handlePing} />
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-16 bg-slate-800 rounded-lg">
+                  <h3 className="text-xl font-semibold text-slate-300">No Equipment Found</h3>
+                  <p className="text-slate-400 mt-2">Adjust your filters or register new equipment.</p>
+                </div>
+              )}
+            </div>
+            
+            <div className="mt-8">
+              <EventLog logs={eventLog} />
+            </div>
           </main>
         </div>
       </div>

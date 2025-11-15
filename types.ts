@@ -19,3 +19,16 @@ export interface Equipment {
   lastSeen: string;
   department?: string;
 }
+
+export enum EventType {
+  INFO = 'INFO',
+  SUCCESS = 'SUCCESS',
+  ERROR = 'ERROR',
+}
+
+export interface EventLogEntry {
+  id: string;
+  timestamp: string;
+  message: string;
+  type: EventType;
+}

@@ -36,10 +36,10 @@ export const SummaryCharts: React.FC<SummaryChartsProps> = ({ data }) => {
     return acc;
   }, {} as Record<EquipmentType, { [key in EquipmentStatus]: number }>);
 
-  // FIX: Replaced spread operator to resolve TypeScript error with mapped types.
-  // The spread operator `...values` was causing "Spread types may only be created from object types."
-  // Explicitly mapping the required properties resolves the issue.
-  const barData = Object.entries(typeSummary).map(([name, values]) => ({
+  // FIX: Added a type assertion to Object.entries. This resolves a TypeScript error where
+  // the `values` variable in the map function was being inferred as `unknown`,
+  // preventing access to its properties.
+  const barData = (Object.entries(typeSummary) as [string, Record<EquipmentStatus, number>][]).map(([name, values]) => ({
     name,
     UP: values.UP,
     DOWN: values.DOWN,
