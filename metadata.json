@@ -1,0 +1,5 @@
+{
+  "name": "IT Monitoring Dashboard",
+  "description": "A dashboard to monitor the UP/DOWN status of network equipment like printers, phones, and time clocks. It includes charts, filters, and the ability to export reports.",
+  "requestFramePermissions": []
+}
