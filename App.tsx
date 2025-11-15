@@ -17,6 +17,7 @@ function App() {
   const [typeFilter, setTypeFilter] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isPingingAll, setIsPingingAll] = useState(false);
 
   const departments = useMemo(() => {
     const allDepartments = equipment
@@ -77,6 +78,47 @@ function App() {
     }
   };
 
+  const handlePingAll = async () => {
+    if (isPingingAll) return;
+
+    setIsPingingAll(true);
+    
+    // Keep a snapshot of the state before mass-updating to "Pinging"
+    const originalEquipmentState = [...equipment];
+
+    // 1. Set all to PINGING for immediate UI feedback
+    setEquipment(prev =>
+      prev.map(item => ({ ...item, status: EquipmentStatus.PINGING }))
+    );
+
+    // 2. Create and run all ping operations concurrently
+    const pingPromises = originalEquipmentState.map(async (item) => {
+      try {
+        const newStatus = await pingDevice(item.ipAddress);
+        // 3. Update each device's status as its promise resolves
+        setEquipment(prev =>
+          prev.map(e =>
+            e.id === item.id
+              ? { ...e, status: newStatus, lastSeen: new Date().toISOString() }
+              : e
+          )
+        );
+      } catch (error) {
+        console.error(`Ping failed for ${item.name}:`, error);
+        // Revert to original status on error for this specific device
+        setEquipment(prev =>
+          prev.map(e =>
+            (e.id === item.id ? { ...e, status: item.status } : e)
+          )
+        );
+      }
+    });
+
+    // 4. Wait for all pings to complete, then re-enable the button
+    await Promise.allSettled(pingPromises);
+    setIsPingingAll(false);
+  };
+
 
   return (
     <>
@@ -96,6 +138,8 @@ function App() {
               departments={departments}
               filteredData={filteredEquipment}
               onOpenModal={() => setIsModalOpen(true)}
+              onPingAll={handlePingAll}
+              isPingingAll={isPingingAll}
             />
 
             {filteredEquipment.length > 0 ? (
