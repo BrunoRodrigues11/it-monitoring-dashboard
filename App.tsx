@@ -7,6 +7,7 @@ import { StatusCard } from './components/StatusCard';
 import { Equipment, EquipmentStatus } from './types';
 import { RegistrationModal } from './components/RegistrationModal';
 import { pingDevice } from './services/pingService';
+import { SummaryIndicators } from './components/SummaryIndicators';
 
 type NewEquipmentData = Omit<Equipment, 'id' | 'status' | 'lastSeen'>;
 
@@ -83,6 +84,7 @@ function App() {
         <div className="max-w-7xl mx-auto">
           <Header />
           <main>
+            <SummaryIndicators equipment={equipment} />
             <SummaryCharts data={equipment} />
             <FilterControls
               statusFilter={statusFilter}
